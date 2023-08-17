@@ -55,10 +55,17 @@ func (this *fixedRateLimitCacheImpl) DoLimit(
 
 	hitAddendForRedis := hitsAddend
 	overlimitIndex := -1
+	nearlimitIndex := -1
 	// Now, actually setup the pipeline, skipping empty cache keys.
 	for i, cacheKey := range cacheKeys {
 		if cacheKey.Key == "" {
 			continue
+		}
+
+		// Check if key is nearlimit in local cache.
+		if this.baseRateLimiter.IsNearLimitWithLocalCache(cacheKey.Key) {
+			nearlimitIndex = i
+			hitAddendForRedis = 0
 		}
 
 		// Check if key is over the limit in local cache.
@@ -69,7 +76,6 @@ func (this *fixedRateLimitCacheImpl) DoLimit(
 				logger.Debugf("cache key is over the limit: %s", cacheKey.Key)
 			}
 			isOverLimitWithLocalCache[i] = true
-			hitAddendForRedis = 0
 			overlimitIndex = i
 			continue
 		}
@@ -91,10 +97,16 @@ func (this *fixedRateLimitCacheImpl) DoLimit(
 			if perSecondPipeline == nil {
 				perSecondPipeline = Pipeline{}
 			}
+			if nearlimitIndex == i {
+				pipelineAppend(this.perSecondClient, &perSecondPipeline, cacheKey.Key, hitsAddend, &results[i], expirationSeconds)
+			}
 			pipelineAppend(this.perSecondClient, &perSecondPipeline, cacheKey.Key, hitAddendForRedis, &results[i], expirationSeconds)
 		} else {
 			if pipeline == nil {
 				pipeline = Pipeline{}
+			}
+			if nearlimitIndex == i {
+				pipelineAppend(this.client, &pipeline, cacheKey.Key, hitsAddend, &results[i], expirationSeconds)
 			}
 			pipelineAppend(this.client, &pipeline, cacheKey.Key, hitAddendForRedis, &results[i], expirationSeconds)
 		}

@@ -32,6 +32,8 @@ type LimitInfo struct {
 	overLimitThreshold  uint32
 }
 
+const NearlimitCacheKeyPrefix = "nearlimit_"
+	
 func NewRateLimitInfo(limit *config.RateLimit, limitBeforeIncrease uint32, limitAfterIncrease uint32,
 	nearLimitThreshold uint32, overLimitThreshold uint32) *LimitInfo {
 	return &LimitInfo{
@@ -64,6 +66,19 @@ func (this *BaseRateLimiter) IsOverLimitWithLocalCache(key string) bool {
 	if this.localCache != nil {
 		// Get returns the value or not found error.
 		_, err := this.localCache.Get([]byte(key))
+		if err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// Returns `true` in case local cache is enabled and contains value for provided nearlimit cache key, `false` otherwise.
+func (this *BaseRateLimiter) IsNearLimitWithLocalCache(key string) bool {
+	nearlimitKey := NearlimitCacheKeyPrefix + key
+	if this.localCache != nil {
+		// Get returns the value or not found error.
+		_, err := this.localCache.Get([]byte(nearlimitKey))
 		if err == nil {
 			return true
 		}
@@ -119,6 +134,7 @@ func (this *BaseRateLimiter) GetResponseDescriptorStatus(key string, limitInfo *
 
 			// The limit is OK but we additionally want to know if we are near the limit.
 			this.checkNearLimitThreshold(limitInfo, hitsAddend)
+			this.addNearlimitCache(key, limitInfo)
 			limitInfo.limit.Stats.WithinLimit.Add(uint64(hitsAddend))
 		}
 	}
@@ -174,6 +190,18 @@ func (this *BaseRateLimiter) checkNearLimitThreshold(limitInfo *LimitInfo, hitsA
 			limitInfo.limit.Stats.NearLimit.Add(uint64(hitsAddend))
 		} else {
 			limitInfo.limit.Stats.NearLimit.Add(uint64(limitInfo.limitAfterIncrease - limitInfo.nearLimitThreshold))
+		}
+	}
+}
+
+func (this *BaseRateLimiter) addNearlimitCache(key string, limitInfo *LimitInfo) {
+	if limitInfo.limitBeforeIncrease >= limitInfo.nearLimitThreshold {
+		nearlimitKey := NearlimitCacheKeyPrefix + key
+		if this.localCache != nil {
+			err := this.localCache.Set([]byte(nearlimitKey), []byte{}, int(utils.UnitToDivider(limitInfo.limit.Limit.Unit)))
+			if err != nil {
+				logger.Errorf("Failing to set local nearlimit cache key: %s", nearlimitKey)
+			}
 		}
 	}
 }
